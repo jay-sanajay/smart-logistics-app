@@ -1,0 +1,174 @@
+/* Base */
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background-color: #0f172a;
+  color: #f8fafc;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+/* Header */
+.header {
+  text-align: center;
+  background: linear-gradient(90deg, #1e3a8a, #2563eb);
+  color: white;
+  font-size: 28px;
+  font-weight: 700;
+  padding: 20px;
+  border-radius: 16px;
+  margin-bottom: 24px;
+  width: 100%;
+  max-width: 600px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* Container */
+.outer-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+/* Card */
+.card {
+  background: #1e293b;
+  padding: 32px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 600px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid #334155;
+}
+
+/* Form Group */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #cbd5e1;
+}
+
+/* Input Fields */
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background-color: #1e293b;
+  border: 1px solid #475569;
+  color: #f1f5f9;
+  font-size: 16px;
+  outline: none;
+  transition: all 0.3s ease;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Autofill fix */
+input:-webkit-autofill {
+  background-color: #1e293b !important;
+  -webkit-box-shadow: 0 0 0px 1000px #1e293b inset !important;
+  -webkit-text-fill-color: #f1f5f9 !important;
+  caret-color: white;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+input::placeholder {
+  color: #94a3b8;
+}
+
+input:focus {
+  background-color: #0f172a;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+/* Buttons */
+.route-btn {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  color: white;
+  font-weight: 600;
+  font-size: 16px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.3s ease;
+  margin-bottom: 12px;
+}
+
+.route-btn:hover {
+  transform: scale(1.03);
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+}
+
+/* Map Container */
+.map-box {
+  height: 300px;
+  margin-top: 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid #334155;
+}
+
+/* Route Info */
+.route-info {
+  margin-top: 16px;
+  background: #334155;
+  padding: 16px;
+  border-radius: 10px;
+  font-size: 16px;
+  color: #f1f5f9;
+  border: 1px solid #475569;
+  line-height: 1.6;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .card,
+  .header {
+    padding: 18px;
+    font-size: 22px;
+  }
+
+  .route-btn {
+    padding: 12px;
+    font-size: 15px;
+  }
+
+  .map-box {
+    height: 240px;
+  }
+}
+.stop-input-group {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+.small-btn {
+  padding: 2px 8px;
+  font-size: 0.9em;
+  background: #eee;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+.remove-stop-btn {
+  background-color: #ef4444;
+  color: white;
+  border: none;
+  margin-top: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+
