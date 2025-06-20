@@ -7,20 +7,8 @@
 
     <title>Smart Logistics Route Optimizer</title>
 
-    <!-- Leaflet CSS (fixed: removed integrity/crossorigin) -->
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-
-    <!-- Inter Font (Google Fonts) -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
-      rel="stylesheet"
-    />
-
-    <!-- App styles (optional: Vite will inject if imported in JS) -->
-    <link rel="stylesheet" href="/src/style.css" />
+    <!-- Fonts CSS from public folder -->
+    <link href="/fonts/inter.css" rel="stylesheet" />
 
     <!-- Favicon -->
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
@@ -29,12 +17,10 @@
   <body style="margin: 0; font-family: 'Inter', sans-serif;">
     <div id="root"></div>
 
-    <!-- Leaflet JS (fixed: removed integrity/crossorigin) -->
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    ></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <!-- React Entry Point -->
+    <!-- React entry point -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

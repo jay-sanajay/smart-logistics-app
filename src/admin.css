@@ -1,0 +1,58 @@
+/* Admin Dashboard Page Styling */
+
+.admin-dashboard {
+  padding: 2rem 1rem;
+  background-color: #0f172a;
+  min-height: 100vh;
+  color: #f8fafc;
+  display: block;
+}
+
+/* Admin Header */
+.admin-dashboard h2 {
+  margin-bottom: 1.5rem;
+  font-size: 1.8rem;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+/* Container that holds the table */
+.table-container {
+  width: 100%;
+  max-width: 1000px;
+  overflow-x: auto;
+}
+
+/* Table styling */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #1e293b;
+  color: #f8fafc;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 12px 16px;
+  border: 1px solid #334155;
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.admin-table th {
+  background-color: #0f172a;
+  color: #facc15;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+.admin-table tr:nth-child(even) {
+  background-color: #1e293b;
+}
+
+.admin-table tr:hover {
+  background-color: #334155;
+}

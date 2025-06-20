@@ -12,9 +12,12 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
 from difflib import SequenceMatcher
 from dotenv import load_dotenv
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from io import BytesIO
+
 load_dotenv()
 
 from email.message import EmailMessage
@@ -50,22 +53,15 @@ async def send_email_with_attachment(to_email: str, subject: str, body: str, fil
     except Exception as e:
         print("❌ Failed to send email:", str(e))
         raise
-print("📧 SMTP_HOST:", os.getenv("SMTP_HOST"))
-print("📧 SMTP_PORT:", os.getenv("SMTP_PORT"))
-print("📧 SMTP_USERNAME:", os.getenv("SMTP_USERNAME"))
-print("📧 SMTP_PASSWORD:", os.getenv("SMTP_PASSWORD"))
-
 
 # --- Load environment variables ---
-load_dotenv()
 OPENCAGE_TOKEN = os.getenv("OPENCAGE_API_KEY", "your_opencage_key")
 MAPBOX_TOKEN = os.getenv("MAPBOX_TOKEN", "your_mapbox_token")
 SECRET_KEY = os.getenv("SECRET_KEY", "secret123")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
-print("SMTP_HOST:", os.getenv("SMTP_HOST"))
-print("SMTP_USERNAME:", os.getenv("SMTP_USERNAME"))
+
 # --- App init ---
 app = FastAPI()
 app.add_middleware(
@@ -96,18 +92,19 @@ class UserModel(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     full_name = Column(String)
     hashed_password = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="customer")
 
 class RouteHistory(Base):
     __tablename__ = "route_history"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    name = Column(String, nullable=False)  # ✅ Add this line
+    name = Column(String, nullable=False)
     distance_km = Column(Float)
     duration_min = Column(Float)
     route = Column(String)
 
 class RouteCreate(BaseModel):
-    name: str  # ✅ MUST include this!
+    name: str
     distance_km: float
     duration_min: float
     route: list[str]
@@ -119,6 +116,7 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+    role: Optional[str] = None
 
 class User(BaseModel):
     username: str
@@ -131,6 +129,7 @@ class UserCreate(BaseModel):
     username: str
     full_name: Optional[str] = None
     password: str
+    role: str = "customer"
 
 class Location(BaseModel):
     address: str
@@ -144,6 +143,13 @@ class RouteSaveRequest(BaseModel):
     duration_min: float
     route: List[str]
 
+class RouteEmailRequest(BaseModel):
+    name: str
+    distance_km: float
+    duration_min: float
+    route: list[str]
+    recipient_email: str
+    map_image_base64: str
 
 # --- Auth Logic ---
 def verify_password(plain, hashed):
@@ -169,9 +175,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
-        if username is None:
+        role = payload.get("role")
+        if username is None or role is None:
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        token_data = TokenData(username=username)
+        token_data = TokenData(username=username, role=role)
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -180,19 +187,54 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
+# --- Role-Based Access Control ---
+async def get_current_user_role(required_roles: list[str]):
+    async def role_checker(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username = payload.get("sub")
+            role = payload.get("role")
+            if username is None or role is None:
+                raise HTTPException(status_code=403, detail="Invalid token or role")
+            if role not in required_roles:
+                raise HTTPException(status_code=403, detail="Access denied for this role")
+        except JWTError:
+            raise HTTPException(status_code=403, detail="Could not validate token")
+
+        user = await get_user(username, db)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+
+    return role_checker
+
+
 # --- Auth Routes ---
-@app.post("/signup")
+# --- Auth Routes ---
+@app.post("/signup", response_model=Token)
 async def signup(user: UserCreate, db: AsyncSession = Depends(get_db)):
     existing_user = await get_user(user.username, db)
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already exists")
 
     hashed_password = pwd_context.hash(user.password)
-    new_user = UserModel(username=user.username, full_name=user.full_name, hashed_password=hashed_password)
+    new_user = UserModel(
+        username=user.username,
+        full_name=user.full_name,
+        hashed_password=hashed_password,
+        role=user.role
+    )
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
-    return {"message": "User created"}
+
+    access_token = create_access_token(
+        data={"sub": new_user.username, "role": new_user.role},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.post("/token", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
@@ -200,7 +242,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     access_token = create_access_token(
-        data={"sub": user.username}, 
+        data={"sub": user.username, "role": user.role},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     return {"access_token": access_token, "token_type": "bearer"}
@@ -208,6 +250,25 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
 @app.get("/me", response_model=User)
 async def read_users_me(current_user: UserModel = Depends(get_current_user)):
     return {"username": current_user.username, "full_name": current_user.full_name}
+
+# --- Role-based Access Dependency ---
+def get_current_user_role(roles: List[str]):
+    async def _get_user(user: UserModel = Depends(get_current_user)):
+        if user.role not in roles:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return user
+    return _get_user
+
+# Example Usage:
+# @app.get("/admin-only")
+# async def admin_dashboard(user: UserModel = Depends(get_current_user_role(["admin"]))):
+#     return {"msg": "Welcome admin"}
+
+# --- Add 'role' to TokenData if needed in future ---
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
 
 @app.post("/save_route")
 async def save_route(data: RouteSaveRequest, current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -230,6 +291,31 @@ async def save_route(data: RouteSaveRequest, current_user: UserModel = Depends(g
         print("❌ Failed to save route:")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Internal Server Error: Could not save route")
+@app.get("/admin/drivers", dependencies=[Depends(get_current_user_role(["admin"]))])
+async def get_all_driver_routes(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(UserModel.id, UserModel.username)
+        .where(UserModel.role == "driver")
+    )
+    drivers = result.fetchall()
+
+    history = []
+    for driver_id, driver_name in drivers:
+        res = await db.execute(
+            select(RouteHistory).where(RouteHistory.user_id == driver_id)
+        )
+        routes = res.scalars().all()
+        for r in routes:
+            history.append({
+                "route_id": r.id,
+                "driver_id": driver_id,
+                "driver_name": driver_name,
+                "path": r.route.split(" ➡️ ") if r.route else [],
+                "distance_km": r.distance_km,
+                "duration_min": r.duration_min,
+            })
+    return history
+
 
 class EmailRequest(BaseModel):
     route_id: int
@@ -346,6 +432,134 @@ async def traffic_route(source: str = Query(...), destination: str = Query(...))
         return res.json()
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error fetching route: {str(e)}")
+from email.message import EmailMessage
+from email.utils import make_msgid
+
+from fastapi import Depends
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
+from io import BytesIO
+from email.message import EmailMessage
+from PIL import Image
+import base64, os
+import aiosmtplib
+
+@app.post("/save_route_with_map")
+async def save_route_with_map(
+    data: RouteEmailRequest,
+    db: AsyncSession = Depends(get_db),
+    user: UserModel = Depends(get_current_user),
+):
+    # Step 1: Save route to DB
+    route_str = " ➡️ ".join(data.route)
+    route_entry = RouteHistory(
+        user_id=user.id,
+        name=data.name,
+        distance_km=data.distance_km,
+        duration_min=data.duration_min,
+        route=route_str,
+    )
+    db.add(route_entry)
+    await db.commit()
+    await db.refresh(route_entry)
+
+    # Step 2: Generate PDF
+    pdf_buffer = BytesIO()
+    c = canvas.Canvas(pdf_buffer, pagesize=letter)
+    width, height = letter
+
+    # === HEADER BOX ===
+    c.setStrokeColorRGB(0.3, 0.3, 0.3)
+    c.setFillColorRGB(0.93, 0.93, 0.93)
+    c.rect(40, height - 100, width - 80, 50, fill=1)
+
+    c.setFont("Helvetica-Bold", 18)
+    c.setFillColorRGB(0.1, 0.1, 0.1)
+    c.drawString(50, height - 80, "📍 Route Report")
+
+    # === Route Info ===
+    c.setFont("Helvetica", 12)
+    c.setFillColorRGB(0, 0, 0)
+    c.drawString(50, height - 130, f"🆔 Route ID: {route_entry.id}")
+    c.drawString(50, height - 150, f"📦 Name: {data.name}")
+    c.drawString(50, height - 170, f"📏 Distance: {data.distance_km:.2f} km")
+    c.drawString(50, height - 190, f"⏱ Duration: {data.duration_min:.2f} minutes")
+
+    # === Route Path ===
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(50, height - 220, "🗺 Route Path:")
+    c.setFont("Helvetica", 11)
+    y = height - 240
+    for i, point in enumerate(data.route, 1):
+        c.drawString(60, y, f"➡ Stop {i}: {point}")
+        y -= 18
+
+    # === Footer ===
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColorRGB(0.5, 0.5, 0.5)
+    c.drawCentredString(width / 2, 20, f"Generated by Smart Logistics • {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+    # === Map Page ===
+    c.showPage()
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(width / 2, height - 40, "🗺 Optimized Route Map")
+
+    try:
+        header, base64_img = data.map_image_base64.split(",", 1)
+        img_data = base64.b64decode(base64_img)
+        img_stream = BytesIO(img_data)
+        pil_image = Image.open(img_stream)
+
+        if pil_image.mode in ("RGBA", "P"):
+            pil_image = pil_image.convert("RGB")
+
+        pil_image.thumbnail((500, 350))
+        img_buf = BytesIO()
+        pil_image.save(img_buf, format="JPEG")
+        img_buf.seek(0)
+
+        img_reader = ImageReader(img_buf)
+
+        # Centered image
+        img_x = (width - pil_image.width) // 2
+        img_y = (height - pil_image.height) // 2
+        c.drawImage(img_reader, img_x, img_y, width=pil_image.width, height=pil_image.height)
+
+        print("✅ Image embedded")
+
+    except Exception as e:
+        print("❌ Image error:", e)
+
+    c.showPage()
+    c.save()
+    pdf_buffer.seek(0)
+
+    # Step 3: Email PDF
+    msg = EmailMessage()
+    msg["Subject"] = "📍 Smart Logistics Route"
+    msg["From"] = os.getenv("SMTP_USERNAME")
+    msg["To"] = data.recipient_email
+    msg.set_content(f"Hi, please find the attached optimized route for '{data.name}'.")
+
+    msg.add_attachment(
+        pdf_buffer.read(),
+        maintype="application",
+        subtype="pdf",
+        filename="route_report.pdf"
+    )
+
+    await aiosmtplib.send(
+        msg,
+        hostname=os.getenv("SMTP_HOST"),
+        port=int(os.getenv("SMTP_PORT")),
+        start_tls=True,
+        username=os.getenv("SMTP_USERNAME"),
+        password=os.getenv("SMTP_PASSWORD")
+    )
+
+    return {"message": "📧 Email sent with map image!", "id": route_entry.id}
+
 
 # --- OpenAPI Customization ---
 from fastapi.openapi.utils import get_openapi
