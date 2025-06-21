@@ -4,9 +4,12 @@ import "leaflet/dist/leaflet.css";
 import { MAPBOX_TOKEN, OPENCAGE_API_KEY, API_BASE } from "./constants";
 import { fetchSuggestions, resolveCoords } from "./geocoding";
 import { login, signup, logout } from "./auth";
-import { getRoute, saveAndEmailRoute } from "./routeUtils";
+import { getRoute, saveAndEmailRoute } from "./routeUtils.jsx";
 import mapImage from './map.jpg';
 import AdminDashboard from "./AdminDashboard";
+import { predictETA } from "./predictEta";
+import ChatBotAssistant from "./ChatBotAssistant";
+
 
 function App() {
   const [userRole, setUserRole] = useState("");
@@ -26,6 +29,7 @@ function App() {
   const mapRef = useRef(null);
   const routeLayerRef = useRef(null);
   const markerRefs = useRef([]);
+  const [predictedEta, setPredictedEta] = useState(null);
 
   useEffect(() => {
   if (!token) return;
@@ -104,12 +108,11 @@ const removeStop = (index) => {
 return (
   <>
     <div className="header">Smart Logistics Route Optimizer</div>
+    <ChatBotAssistant />
 
     {token && userRole === "admin" && adminConfirmed ? (
-      // Admin Dashboard full screen
       <AdminDashboard token={token} />
     ) : (
-      // Regular login or map UI
       <div className="outer-container">
         <div className="card">
           <div className="login-wrapper">
@@ -136,18 +139,18 @@ return (
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                   />
+
                   <button onClick={handleLogin}>Log In</button>
 
                   <select
-  className="styled-select"
-  value={signupRole}
-  onChange={(e) => setSignupRole(e.target.value)}
->
-  <option value="customer">Customer</option>
-  <option value="driver">Driver</option>
-  <option value="admin">Admin</option>
-</select>
-
+                    className="styled-select"
+                    value={signupRole}
+                    onChange={(e) => setSignupRole(e.target.value)}
+                  >
+                    <option value="customer">Customer</option>
+                    <option value="driver">Driver</option>
+                    <option value="admin">Admin</option>
+                  </select>
 
                   <button onClick={handleSignup}>Sign Up</button>
                 </div>
@@ -235,10 +238,10 @@ return (
                     </ul>
                   </div>
 
-                  {/* Actions */}
+                  {/* Route Actions */}
                   <button
-                    onClick={() =>
-                      getRoute({
+                    onClick={async () => {
+                      await getRoute({
                         pickup,
                         destination,
                         stops,
@@ -248,8 +251,19 @@ return (
                         routeLayerRef,
                         markerRefs,
                         setLastRoute,
-                      })
-                    }
+                      });
+
+                      if (lastRoute) {
+                        const eta = await predictETA({
+                          distance_km: lastRoute.distance / 1000,
+                          num_stops: stops.length,
+                          weather: "Clear",
+                          time_of_day: "Afternoon",
+                          traffic_level: "Moderate",
+                        });
+                        setPredictedEta(eta);
+                      }
+                    }}
                     className="route-btn"
                   >
                     Optimize Route
@@ -274,11 +288,20 @@ return (
                     Save & Email PDF
                   </button>
 
+                  {/* Route Info Output */}
                   {routeInfo && (
                     <div
                       className="route-info"
                       dangerouslySetInnerHTML={{ __html: routeInfo }}
                     />
+                  )}
+
+                  {/* Predicted ETA */}
+                  {predictedEta && (
+                    <div className="route-info">
+                      <h4>🧠 ML Predicted ETA:</h4>
+                      <p><strong>{(predictedEta / 60).toFixed(2)} minutes</strong></p>
+                    </div>
                   )}
                 </div>
               )}
@@ -289,6 +312,7 @@ return (
     )}
   </>
 );
+
 
 
 }

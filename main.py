@@ -17,6 +17,9 @@ from dotenv import load_dotenv
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from io import BytesIO
+from fastapi import FastAPI
+import traceback
+from sqlalchemy import Column, Integer, Float, String, Text, ForeignKey, select, desc
 
 load_dotenv()
 
@@ -71,6 +74,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+from chat_gemini import router as chat_router
+app.include_router(chat_router)
 
 # --- Auth setup ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -102,6 +107,7 @@ class RouteHistory(Base):
     distance_km = Column(Float)
     duration_min = Column(Float)
     route = Column(String)
+    map_image_base64 = Column(Text)
 
 class RouteCreate(BaseModel):
     name: str
@@ -150,6 +156,88 @@ class RouteEmailRequest(BaseModel):
     route: list[str]
     recipient_email: str
     map_image_base64: str
+from sqlalchemy import Column, Integer, Float, String, Text, TIMESTAMP, ARRAY
+from datetime import datetime
+
+class DeliveryLog(Base):
+    __tablename__ = "delivery_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pickup_location = Column(Text)
+    destination_location = Column(Text)
+    stops = Column(ARRAY(Text))
+    distance_km = Column(Float)
+    duration_min = Column(Float)
+    actual_eta_min = Column(Float)
+    weather = Column(Text)
+    time_of_day = Column(String)
+    traffic_level = Column(String)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+from sqlalchemy.orm import Session
+from datetime import datetime
+
+def log_delivery(
+    db: Session,
+    pickup_location: str,
+    destination_location: str,
+    stops: list,
+    distance_km: float,
+    duration_min: float,
+    actual_eta_min: float,
+    weather: str = "clear",
+    time_of_day: str = "day",
+    traffic_level: str = "moderate"
+):
+    delivery = DeliveryLog(
+        pickup_location=pickup_location,
+        destination_location=destination_location,
+        stops=stops,
+        distance_km=distance_km,
+        duration_min=duration_min,
+        actual_eta_min=actual_eta_min,
+        weather=weather,
+        time_of_day=time_of_day,
+        traffic_level=traffic_level,
+        created_at=datetime.utcnow()
+    )
+    db.add(delivery)
+    db.commit()
+    db.refresh(delivery)
+    return delivery
+import joblib
+from pydantic import BaseModel
+
+# Load trained model
+MODEL_PATH = "eta_model.pkl"
+model = joblib.load(MODEL_PATH)
+
+# Define input schema
+class ETAPredictRequest(BaseModel):
+    distance_km: float
+    num_stops: int
+    weather: str
+    time_of_day: str
+    traffic_level: str
+
+@app.post("/predict_eta")
+async def predict_eta(data: ETAPredictRequest):
+    try:
+        # Match features as used during training
+        df = {
+            "distance_km": [data.distance_km],
+            "num_stops": [data.num_stops],
+            "weather": [data.weather],
+            "time_of_day": [data.time_of_day],
+            "traffic_level": [data.traffic_level]
+        }
+
+        import pandas as pd
+        input_df = pd.DataFrame(df)
+        prediction = model.predict(input_df)[0]
+        return {"predicted_eta_min": round(prediction, 2)}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 # --- Auth Logic ---
 def verify_password(plain, hashed):
@@ -291,6 +379,7 @@ async def save_route(data: RouteSaveRequest, current_user: UserModel = Depends(g
         print("❌ Failed to save route:")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Internal Server Error: Could not save route")
+    
 @app.get("/admin/drivers", dependencies=[Depends(get_current_user_role(["admin"]))])
 async def get_all_driver_routes(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -324,18 +413,85 @@ class EmailRequest(BaseModel):
 from reportlab.pdfgen import canvas
 import tempfile, uuid
 
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+import os
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+
 def generate_pdf(route):
-    pdf_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.pdf")
-    c = canvas.Canvas(pdf_path)
+    pdf_path = "route_summary.pdf"
+    c = canvas.Canvas(pdf_path, pagesize=letter)
+    width, height = letter
+    y = height - 50
+
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(100, 800, "Route Report")
+    c.drawString(50, y, "📍 Route Report")
+    y -= 30
+
     c.setFont("Helvetica", 12)
-    c.drawString(100, 770, f"Route ID: {route.id}")
-    c.drawString(100, 750, f"Path: {route.route}")
-    c.drawString(100, 730, f"Distance: {route.distance_km} km")
-    c.drawString(100, 710, f"Duration: {route.duration_min} mins")
+    c.drawString(50, y, f"🆔 Route ID: {route.id}")
+    y -= 20
+    c.drawString(50, y, f"📝 Name: {route.name}")
+    y -= 20
+    c.drawString(50, y, f"📏 Distance: {route.distance_km:.2f} km")
+    y -= 20
+    c.drawString(50, y, f"⏱️ Duration: {route.duration_min:.2f} minutes")
+    y -= 30
+
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(50, y, "🛣️ Route Path:")
+    y -= 20
+    c.setFont("Helvetica", 12)
+
+    stops = route.route.split("➡")
+    for i, stop in enumerate(stops):
+        c.drawString(70, y, f"- Stop {i+1}: {stop.strip()}")
+        y -= 20
+        if y < 100:
+            c.showPage()
+            y = height - 50
+            c.setFont("Helvetica", 12)
+
+    # Map Page
+    if route.map_image_base64:
+        try:
+            c.showPage()
+            c.setFont("Helvetica-Bold", 14)
+            c.drawCentredString(width / 2, height - 40, "🗺 Optimized Route Map")
+
+            header, base64_img = route.map_image_base64.split(",", 1)
+            img_data = base64.b64decode(base64_img)
+            img_stream = BytesIO(img_data)
+            pil_image = Image.open(img_stream)
+
+            if pil_image.mode in ("RGBA", "P"):
+                pil_image = pil_image.convert("RGB")
+
+            pil_image.thumbnail((500, 350))
+            img_buf = BytesIO()
+            pil_image.save(img_buf, format="JPEG")
+            img_buf.seek(0)
+
+            img_reader = ImageReader(img_buf)
+            img_x = (width - pil_image.width) // 2
+            img_y = (height - pil_image.height) // 2
+            c.drawImage(img_reader, img_x, img_y, width=pil_image.width, height=pil_image.height)
+
+        except Exception:
+            traceback.print_exc()
+            print("❌ Failed to embed map image")
+
+    # Footer
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(50, 30, f"Generated • {__import__('datetime').datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
     c.save()
     return pdf_path
+
+
+
+
 @app.post("/email_route/")
 async def email_route_pdf(
     data: EmailRequest,
@@ -344,31 +500,49 @@ async def email_route_pdf(
 ):
     try:
         # Fetch route
-        result = await db.execute(select(RouteHistory).where(
-            RouteHistory.id == data.route_id,
-            RouteHistory.user_id == current_user.id
-        ))
+        result = await db.execute(
+            select(RouteHistory).where(
+                RouteHistory.id == data.route_id,
+                RouteHistory.user_id == current_user.id
+            )
+        )
         route = result.scalar_one_or_none()
-
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")
 
-        # ✅ Generate PDF with ReportLab
+        # Generate PDF
         pdf_path = generate_pdf(route)
 
-        # 📧 Send email
-        await send_email_with_attachment(
-            to_email=data.recipient_email,
-            subject="Shared Route PDF",
-            body=f"Hi, please find attached the route report from user {current_user.username}.",
-            file_path=pdf_path
+        # Prepare Email
+        msg = EmailMessage()
+        msg["Subject"] = "📍 Smart Logistics Route"
+        msg["From"] = os.getenv("SMTP_USERNAME")
+        msg["To"] = data.recipient_email
+        msg.set_content(f"Hi, please find attached the optimized route for '{route.name}'.")
+
+        with open(pdf_path, "rb") as f:
+            msg.add_attachment(
+                f.read(),
+                maintype="application",
+                subtype="pdf",
+                filename="route_report.pdf"
+            )
+
+        # Send Email
+        await aiosmtplib.send(
+            msg,
+            hostname=os.getenv("SMTP_HOST"),
+            port=int(os.getenv("SMTP_PORT")),
+            start_tls=True,
+            username=os.getenv("SMTP_USERNAME"),
+            password=os.getenv("SMTP_PASSWORD")
         )
 
         return {"message": f"PDF sent to {data.recipient_email}"}
     except Exception:
-        print("❌ Email sending error:")
-        print(traceback.format_exc())
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to send email")
+
 
 
 # --- Suggest Locations ---
@@ -432,6 +606,7 @@ async def traffic_route(source: str = Query(...), destination: str = Query(...))
         return res.json()
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error fetching route: {str(e)}")
+    
 from email.message import EmailMessage
 from email.utils import make_msgid
 
@@ -444,6 +619,8 @@ from email.message import EmailMessage
 from PIL import Image
 import base64, os
 import aiosmtplib
+from fastapi import HTTPException
+from fastapi import status
 
 @app.post("/save_route_with_map")
 async def save_route_with_map(
@@ -451,115 +628,133 @@ async def save_route_with_map(
     db: AsyncSession = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
-    # Step 1: Save route to DB
-    route_str = " ➡️ ".join(data.route)
-    route_entry = RouteHistory(
-        user_id=user.id,
-        name=data.name,
-        distance_km=data.distance_km,
-        duration_min=data.duration_min,
-        route=route_str,
-    )
-    db.add(route_entry)
-    await db.commit()
-    await db.refresh(route_entry)
-
-    # Step 2: Generate PDF
-    pdf_buffer = BytesIO()
-    c = canvas.Canvas(pdf_buffer, pagesize=letter)
-    width, height = letter
-
-    # === HEADER BOX ===
-    c.setStrokeColorRGB(0.3, 0.3, 0.3)
-    c.setFillColorRGB(0.93, 0.93, 0.93)
-    c.rect(40, height - 100, width - 80, 50, fill=1)
-
-    c.setFont("Helvetica-Bold", 18)
-    c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.drawString(50, height - 80, "📍 Route Report")
-
-    # === Route Info ===
-    c.setFont("Helvetica", 12)
-    c.setFillColorRGB(0, 0, 0)
-    c.drawString(50, height - 130, f"🆔 Route ID: {route_entry.id}")
-    c.drawString(50, height - 150, f"📦 Name: {data.name}")
-    c.drawString(50, height - 170, f"📏 Distance: {data.distance_km:.2f} km")
-    c.drawString(50, height - 190, f"⏱ Duration: {data.duration_min:.2f} minutes")
-
-    # === Route Path ===
-    c.setFont("Helvetica-Bold", 13)
-    c.drawString(50, height - 220, "🗺 Route Path:")
-    c.setFont("Helvetica", 11)
-    y = height - 240
-    for i, point in enumerate(data.route, 1):
-        c.drawString(60, y, f"➡ Stop {i}: {point}")
-        y -= 18
-
-    # === Footer ===
-    c.setFont("Helvetica-Oblique", 8)
-    c.setFillColorRGB(0.5, 0.5, 0.5)
-    c.drawCentredString(width / 2, 20, f"Generated by Smart Logistics • {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
-    # === Map Page ===
-    c.showPage()
-    c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(width / 2, height - 40, "🗺 Optimized Route Map")
-
     try:
-        header, base64_img = data.map_image_base64.split(",", 1)
-        img_data = base64.b64decode(base64_img)
-        img_stream = BytesIO(img_data)
-        pil_image = Image.open(img_stream)
-
-        if pil_image.mode in ("RGBA", "P"):
-            pil_image = pil_image.convert("RGB")
-
-        pil_image.thumbnail((500, 350))
-        img_buf = BytesIO()
-        pil_image.save(img_buf, format="JPEG")
-        img_buf.seek(0)
-
-        img_reader = ImageReader(img_buf)
-
-        # Centered image
-        img_x = (width - pil_image.width) // 2
-        img_y = (height - pil_image.height) // 2
-        c.drawImage(img_reader, img_x, img_y, width=pil_image.width, height=pil_image.height)
-
-        print("✅ Image embedded")
+        route_str = "➡".join(data.route)
+        route_entry = RouteHistory(
+            user_id=user.id,
+            name=data.name,
+            distance_km=data.distance_km,
+            duration_min=data.duration_min,
+            route=route_str,
+            map_image_base64=data.map_image_base64,
+        )
+        db.add(route_entry)
+        await db.commit()
+        await db.refresh(route_entry)
+        return {"id": route_entry.id}
 
     except Exception as e:
-        print("❌ Image error:", e)
+        import traceback
+        print("❌ Save route error:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save route: {str(e)}")
 
-    c.showPage()
-    c.save()
-    pdf_buffer.seek(0)
 
-    # Step 3: Email PDF
-    msg = EmailMessage()
-    msg["Subject"] = "📍 Smart Logistics Route"
-    msg["From"] = os.getenv("SMTP_USERNAME")
-    msg["To"] = data.recipient_email
-    msg.set_content(f"Hi, please find the attached optimized route for '{data.name}'.")
 
-    msg.add_attachment(
-        pdf_buffer.read(),
-        maintype="application",
-        subtype="pdf",
-        filename="route_report.pdf"
-    )
+        # Step 2: Generate PDF
+        pdf_buffer = BytesIO()
+        c = canvas.Canvas(pdf_buffer, pagesize=letter)
+        width, height = letter
 
-    await aiosmtplib.send(
-        msg,
-        hostname=os.getenv("SMTP_HOST"),
-        port=int(os.getenv("SMTP_PORT")),
-        start_tls=True,
-        username=os.getenv("SMTP_USERNAME"),
-        password=os.getenv("SMTP_PASSWORD")
-    )
+        # === HEADER BOX ===
+        c.setStrokeColorRGB(0.3, 0.3, 0.3)
+        c.setFillColorRGB(0.93, 0.93, 0.93)
+        c.rect(40, height - 100, width - 80, 50, fill=1)
 
-    return {"message": "📧 Email sent with map image!", "id": route_entry.id}
+        c.setFont("Helvetica-Bold", 18)
+        c.setFillColorRGB(0.1, 0.1, 0.1)
+        c.drawString(50, height - 80, "📍 Route Report")
 
+        # === Route Info ===
+        c.setFont("Helvetica", 12)
+        c.setFillColorRGB(0, 0, 0)
+        c.drawString(50, height - 130, f"🆔 Route ID: {route_entry.id}")
+        c.drawString(50, height - 150, f"📦 Name: {data.name}")
+        c.drawString(50, height - 170, f"📏 Distance: {data.distance_km:.2f} km")
+        c.drawString(50, height - 190, f"⏱ Duration: {data.duration_min:.2f} minutes")
+
+        # === Route Path ===
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(50, height - 220, "🗺 Route Path:")
+        c.setFont("Helvetica", 11)
+        y = height - 240
+        for i, point in enumerate(data.route, 1):
+            c.drawString(60, y, f"➡ Stop {i}: {point}")
+            y -= 18
+
+        # === Footer ===
+        c.setFont("Helvetica-Oblique", 8)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawCentredString(width / 2, 20, f"Generated by Smart Logistics • {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+        # === Map Page ===
+        c.showPage()
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(width / 2, height - 40, "🗺 Optimized Route Map")
+
+        try:
+            header, base64_img = data.map_image_base64.split(",", 1)
+            img_data = base64.b64decode(base64_img)
+            img_stream = BytesIO(img_data)
+            pil_image = Image.open(img_stream)
+
+            if pil_image.mode in ("RGBA", "P"):
+                pil_image = pil_image.convert("RGB")
+
+            pil_image.thumbnail((500, 350))
+            img_buf = BytesIO()
+            pil_image.save(img_buf, format="JPEG")
+            img_buf.seek(0)
+
+            img_reader = ImageReader(img_buf)
+
+            # Centered image
+            img_x = (width - pil_image.width) // 2
+            img_y = (height - pil_image.height) // 2
+            c.drawImage(img_reader, img_x, img_y, width=pil_image.width, height=pil_image.height)
+
+            print("✅ Image embedded")
+
+        except Exception as e:
+            traceback.print_exc()
+            print("❌ Image error:", e)
+
+        c.showPage()
+        c.save()
+        pdf_buffer.seek(0)
+
+        # Step 3: Email PDF
+        msg = EmailMessage()
+        msg["Subject"] = "📍 Smart Logistics Route"
+        msg["From"] = os.getenv("SMTP_USERNAME")
+        msg["To"] = data.recipient_email
+        msg.set_content(f"Hi, please find the attached optimized route for '{data.name}'.")
+
+        msg.add_attachment(
+            pdf_buffer.read(),
+            maintype="application",
+            subtype="pdf",
+            filename="route_report.pdf"
+        )
+
+        await aiosmtplib.send(
+            msg,
+            hostname=os.getenv("SMTP_HOST"),
+            port=int(os.getenv("SMTP_PORT")),
+            start_tls=True,
+            username=os.getenv("SMTP_USERNAME"),
+            password=os.getenv("SMTP_PASSWORD")
+        )
+
+        print("✅ Email sent")
+
+        # ✅ Always return JSON
+        return {"id": route_entry.id}
+
+    except Exception as e:
+        traceback.print_exc()
+        print("❌ Error while saving/emailing route:", str(e))
+        raise HTTPException(status_code=500, detail="Failed to save and email route.")
 
 # --- OpenAPI Customization ---
 from fastapi.openapi.utils import get_openapi
