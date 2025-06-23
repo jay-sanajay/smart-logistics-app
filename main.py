@@ -108,6 +108,8 @@ class RouteHistory(Base):
     duration_min = Column(Float)
     route = Column(String)
     map_image_base64 = Column(Text)
+    summary_image_base64 = Column(Text, nullable=True)
+
 
 class RouteCreate(BaseModel):
     name: str
@@ -156,6 +158,8 @@ class RouteEmailRequest(BaseModel):
     route: list[str]
     recipient_email: str
     map_image_base64: str
+    summary_image_base64: str 
+
 from sqlalchemy import Column, Integer, Float, String, Text, TIMESTAMP, ARRAY
 from datetime import datetime
 
@@ -420,16 +424,26 @@ import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 
-def generate_pdf(route):
+def generate_pdf(route, summary_image_base64=None):
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.utils import ImageReader
+    from io import BytesIO
+    from PIL import Image
+    import base64
+    import traceback
+
     pdf_path = "route_summary.pdf"
     c = canvas.Canvas(pdf_path, pagesize=letter)
     width, height = letter
     y = height - 50
 
+    # --- Header ---
     c.setFont("Helvetica-Bold", 16)
     c.drawString(50, y, "📍 Route Report")
     y -= 30
 
+    # --- Route Info ---
     c.setFont("Helvetica", 12)
     c.drawString(50, y, f"🆔 Route ID: {route.id}")
     y -= 20
@@ -440,21 +454,22 @@ def generate_pdf(route):
     c.drawString(50, y, f"⏱️ Duration: {route.duration_min:.2f} minutes")
     y -= 30
 
+    # --- Route Path ---
     c.setFont("Helvetica-Bold", 13)
     c.drawString(50, y, "🛣️ Route Path:")
     y -= 20
     c.setFont("Helvetica", 12)
-
     stops = route.route.split("➡")
+
     for i, stop in enumerate(stops):
-        c.drawString(70, y, f"- Stop {i+1}: {stop.strip()}")
+        c.drawString(70, y, f"- Stop {i + 1}: {stop.strip()}")
         y -= 20
         if y < 100:
             c.showPage()
             y = height - 50
             c.setFont("Helvetica", 12)
 
-    # Map Page
+    # --- Map Image ---
     if route.map_image_base64:
         try:
             c.showPage()
@@ -466,28 +481,73 @@ def generate_pdf(route):
             img_stream = BytesIO(img_data)
             pil_image = Image.open(img_stream)
 
+            # ✅ Fix transparency
             if pil_image.mode in ("RGBA", "P"):
+                pil_image = pil_image.convert("RGBA")
+                white_bg = Image.new("RGBA", pil_image.size, (255, 255, 255, 255))
+                pil_image = Image.alpha_composite(white_bg, pil_image)
                 pil_image = pil_image.convert("RGB")
 
-            pil_image.thumbnail((500, 350))
+            pil_image.thumbnail((500, 350), Image.LANCZOS)
             img_buf = BytesIO()
-            pil_image.save(img_buf, format="JPEG")
+            pil_image.save(img_buf, format="JPEG", quality=95)
             img_buf.seek(0)
 
             img_reader = ImageReader(img_buf)
-            img_x = (width - pil_image.width) // 2
-            img_y = (height - pil_image.height) // 2
-            c.drawImage(img_reader, img_x, img_y, width=pil_image.width, height=pil_image.height)
+            img_w, img_h = pil_image.size
+            img_x = (width - img_w) // 2
+            img_y = (height - img_h) // 2
+            c.drawImage(img_reader, img_x, img_y, width=img_w, height=img_h)
 
-        except Exception:
+            print("✅ Map image embedded")
+        except Exception as e:
             traceback.print_exc()
-            print("❌ Failed to embed map image")
+            print("❌ Map image error:", e)
 
-    # Footer
+    # --- Summary Screenshot ---
+    if summary_image_base64:
+        try:
+            c.showPage()
+            c.setFont("Helvetica-Bold", 14)
+            c.drawCentredString(width / 2, height - 40, "🧾 Summary Report")
+
+            header, base64_summary = summary_image_base64.split(",", 1)
+            summary_img_data = base64.b64decode(base64_summary)
+            summary_stream = BytesIO(summary_img_data)
+            summary_pil = Image.open(summary_stream)
+
+            # ✅ Handle transparency
+            if summary_pil.mode in ("RGBA", "P"):
+                summary_pil = summary_pil.convert("RGBA")
+                white_bg = Image.new("RGBA", summary_pil.size, (255, 255, 255, 255))
+                summary_pil = Image.alpha_composite(white_bg, summary_pil)
+                summary_pil = summary_pil.convert("RGB")
+
+            summary_pil.thumbnail((700, 600), Image.LANCZOS)  
+            summary_buf = BytesIO()
+            summary_pil.save(summary_buf, format="JPEG", quality=95)
+            summary_buf.seek(0)
+
+            summary_reader = ImageReader(summary_buf)
+            img_w, img_h = summary_pil.size
+            img_x = (width - img_w) // 2
+            img_y = (height - img_h) // 2
+            c.drawImage(summary_reader, img_x, img_y, width=img_w, height=img_h)
+
+            print("✅ Summary image embedded")
+        except Exception as e:
+            traceback.print_exc()
+            print("❌ Summary image error:", e)
+
+    # --- Footer ---
     c.setFont("Helvetica-Oblique", 8)
     c.drawString(50, 30, f"Generated • {__import__('datetime').datetime.now().strftime('%Y-%m-%d %I:%M %p')}")
     c.save()
     return pdf_path
+
+
+
+
 
 
 
@@ -510,8 +570,8 @@ async def email_route_pdf(
         if not route:
             raise HTTPException(status_code=404, detail="Route not found")
 
-        # Generate PDF
-        pdf_path = generate_pdf(route)
+        # ✅ Generate PDF with map + summary
+        pdf_path = generate_pdf(route, summary_image_base64=route.summary_image_base64)
 
         # Prepare Email
         msg = EmailMessage()
@@ -542,6 +602,7 @@ async def email_route_pdf(
     except Exception:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Failed to send email")
+
 
 
 
@@ -637,6 +698,7 @@ async def save_route_with_map(
             duration_min=data.duration_min,
             route=route_str,
             map_image_base64=data.map_image_base64,
+            summary_image_base64=data.summary_image_base64 
         )
         db.add(route_entry)
         await db.commit()

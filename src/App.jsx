@@ -287,14 +287,34 @@ return (
                   >
                     Save & Email PDF
                   </button>
+{routeInfo && (
+  <div
+    className="route-info"
+    dangerouslySetInnerHTML={{ __html: routeInfo }}
+  />
+)}
 
-                  {/* Route Info Output */}
-                  {routeInfo && (
-                    <div
-                      className="route-info"
-                      dangerouslySetInnerHTML={{ __html: routeInfo }}
-                    />
-                  )}
+{routeInfo && (
+  <div
+    id="route-summary"
+    style={{
+      position: "absolute",
+      top: "-9999px",
+      left: "-9999px",
+      zIndex: -1,
+    }}
+    dangerouslySetInnerHTML={{ __html: routeInfo }}
+  />
+)}
+
+
+
+
+
+
+
+
+
 
                   {/* Predicted ETA */}
                   {predictedEta && (

@@ -163,12 +163,39 @@ button:hover {
 /* Route Info Box */
 .route-info {
   margin-top: 1rem;
-  background-color: #0f172a;
-  padding: 1rem;
-  border-radius: 8px;
-  font-size: 0.95rem;
+  background-color: #ffffff;   /* White background */
+  color: #000000;              /* Black text */
+  padding: 1.5rem;
+  border-radius: 12px;
+  font-size: 1rem;
   line-height: 1.6;
-  color: #f1f5f9;
-  border: 1px solid #334155;
+  border: 1px solid #cbd5e1;   /* Light border */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
+
+#route-summary {
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  padding: 24px;
+  background-color: white;  /* white background for JPEG/PDF */
+  color: black;              /* dark text for readability */
+  line-height: 1.6;
+  border-radius: 12px;
+  width: 700px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+#route-summary {
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  padding: 24px;
+  background-color: white;
+  color: black;
+  line-height: 1.6;
+  border-radius: 12px;
+  width: 700px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+
+
 

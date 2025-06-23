@@ -1,8 +1,10 @@
 import { API_BASE, MAPBOX_TOKEN } from "./constants";
 import { resolveCoords } from "./geocoding";
-import { toPng } from "html-to-image";
+import { toJpeg } from "html-to-image";
 import L from "leaflet";
 import { predictETA } from "./predictEta";
+import { toPng } from 'html-to-image';
+
 
 const haversineDistance = (coord1, coord2) => {
   const toRad = (deg) => deg * Math.PI / 180;
@@ -75,13 +77,26 @@ export const getRoute = async ({
     if (!pickupCoords) throw new Error("Pickup coordinates not found.");
     if (stopCoords.length === 0) throw new Error("No valid stops found.");
 
-    const stopsWithDistance = stopCoords.map((s) => ({
-      ...s,
-      distance: haversineDistance(pickupCoords, s.coords),
-    }));
-    const sortedStops = stopsWithDistance.sort((a, b) => a.distance - b.distance);
-    const nearestStopObj = sortedStops[0];
-    const secondNearestStopObj = sortedStops[1] || null;
+    // Step 1: Find nearest stop to pickup
+const stopsWithDistanceFromPickup = stopCoords.map((s) => ({
+  ...s,
+  distance: haversineDistance(pickupCoords, s.coords),
+}));
+const sortedFromPickup = stopsWithDistanceFromPickup.sort((a, b) => a.distance - b.distance);
+const nearestStopObj = sortedFromPickup[0];
+
+// Step 2: Find nearest to nearestStop
+let secondNearestStopObj = null;
+if (nearestStopObj) {
+  const stopsExcludingNearest = stopCoords.filter(s => s.stop !== nearestStopObj.stop);
+  const stopsFromNearest = stopsExcludingNearest.map((s) => ({
+    ...s,
+    distance: haversineDistance(nearestStopObj.coords, s.coords),
+  }));
+  stopsFromNearest.sort((a, b) => a.distance - b.distance);
+  secondNearestStopObj = stopsFromNearest[0] || null;
+}
+
 
     if (routeLayerRef.current) mapRef.current.removeLayer(routeLayerRef.current);
     markerRefs.current.forEach((m) => mapRef.current.removeLayer(m));
@@ -193,8 +208,46 @@ export const saveAndEmailRoute = async ({ lastRoute, pickup, stops, destination,
       alert("❌ Map element not found.");
       return;
     }
+   const summaryElement = document.getElementById("route-summary");
 
-    const mapImageBase64 = await toPng(mapElement);
+// Temporarily show it for image capture
+summaryElement.style.position = "static";
+summaryElement.style.visibility = "visible";
+
+// Wait a frame to ensure DOM is updated
+await new Promise((resolve) => setTimeout(resolve, 100));
+
+// Convert to image
+const summaryImageBase64 = await toJpeg(summaryElement, {
+  backgroundColor: "#ffffff",
+  quality: 0.98,
+});
+
+// Hide it again
+summaryElement.style.position = "absolute";
+summaryElement.style.top = "-9999px";
+summaryElement.style.left = "-9999px";
+summaryElement.style.visibility = "hidden";
+
+// Optional: Debug preview
+window.summaryImageBase64 = summaryImageBase64;
+console.log("✅ Summary base64:", summaryImageBase64);
+
+const img = new Image();
+img.src = summaryImageBase64;
+img.style.maxWidth = "500px";
+document.body.appendChild(img);
+
+
+
+
+
+
+   const mapImageBase64 = await toPng(mapElement, {
+  backgroundColor:"#ffffff",
+  quality: 0.95,
+});
+
 
     const routeList = [pickup, ...stops.filter(Boolean), destination];
     const routeListString = routeList;
@@ -215,6 +268,7 @@ export const saveAndEmailRoute = async ({ lastRoute, pickup, stops, destination,
         route: routeList,
         recipient_email: email,
         map_image_base64: mapImageBase64,
+        summary_image_base64: summaryImageBase64,
       }),
     });
 
