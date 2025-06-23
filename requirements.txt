@@ -13,3 +13,4 @@ google-generativeai
 scikit-learn
 openai
 asyncpg
+python-multipart
