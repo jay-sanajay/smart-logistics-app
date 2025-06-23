@@ -12,3 +12,4 @@ aiosmtplib
 google-generativeai
 scikit-learn
 openai
+asyncpg
