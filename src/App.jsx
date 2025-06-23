@@ -9,6 +9,14 @@ import mapImage from './map.jpg';
 import AdminDashboard from "./AdminDashboard";
 import { predictETA } from "./predictEta";
 import ChatBotAssistant from "./ChatBotAssistant";
+// ✅ Fix missing marker icons (for deployment like Vercel)
+delete L.Icon.Default.prototype._getIconUrl;
+
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "/marker-icon-2x.png",
+  iconUrl: "/marker-icon.png",
+  shadowUrl: "/marker-shadow.png",
+});
 
 
 function App() {
