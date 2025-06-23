@@ -1,5 +1,7 @@
 import { useState } from "react";
 import "./chatbot.css";
+import { API_BASE } from "./constants"; // ✅ Import API_BASE
+
 function ChatBotAssistant() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -11,15 +13,23 @@ function ChatBotAssistant() {
     const userMsg = { type: "user", text: input };
     setMessages((prev) => [...prev, userMsg]);
 
-    const res = await fetch("http://localhost:8000/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: input }),
-    });
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: input }),
+      });
 
-    const data = await res.json();
-    const botReply = { type: "bot", text: data.reply || "🤖 No reply." };
-    setMessages((prev) => [...prev, botReply]);
+      const data = await res.json();
+      const botReply = { type: "bot", text: data.reply || "🤖 No reply." };
+      setMessages((prev) => [...prev, botReply]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { type: "bot", text: "⚠️ Failed to connect to chatbot." },
+      ]);
+    }
+
     setInput("");
   };
 
