@@ -16,3 +16,5 @@ asyncpg
 python-multipart
 pytest
 httpx
+aiosqlite
+flake8

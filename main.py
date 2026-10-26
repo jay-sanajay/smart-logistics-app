@@ -104,10 +104,19 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- DB setup ---
 Base = declarative_base()
-engine = create_async_engine(DATABASE_URL, echo=True)
-async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+try:
+    engine = create_async_engine(DATABASE_URL, echo=False)
+except Exception as e:
+    engine = None
+if engine:
+    async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+else:
+    async_session = None
 
 async def get_db():
+    if not async_session:
+        yield None
+        return
     async with async_session() as session:
         yield session
 
@@ -891,8 +900,8 @@ app.openapi = custom_openapi
 
 @app.on_event("startup")
 async def on_startup():
-    if os.getenv("TESTING") == "1":
-        logger.info("TESTING mode active: skipping DB startup")
+    if os.getenv("TESTING") == "1" or not engine:
+        logger.info("TESTING mode active or engine not configured: skipping DB startup")
         return
     try:
         async with engine.begin() as conn:
